@@ -1,0 +1,61 @@
+
+services:
+  gateway:
+    build: .
+    command: uvicorn gateway.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_A_URL: http://service_a:8001
+    depends_on:
+      - service_a
+
+  service_a:
+    build: .
+    command: uvicorn services.service_a.main:app --host 0.0.0.0 --port 8001
+    environment:
+      SERVICE_B_URL: http://service_b:8002
+    depends_on:
+      - service_b
+
+  service_b:
+    build: .
+    command: uvicorn services.service_b.main:app --host 0.0.0.0 --port 8002
+    environment:
+      FAULT_DELAY_SECONDS: "0"
+      FAULT_ERROR_RATE: "0"
+
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - gateway
+      - service_a
+      - service_b
+  
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+  
+  locust:
+    image: locustio/locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./locustfile.py:/mnt/locust/locustfile.py:ro
+    command: -f /mnt/locust/locustfile.py --host http://gateway:8000
+    depends_on:
+      - gateway
+
+
+volumes:
+  grafana_data:

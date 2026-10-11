@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "gateway"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+
+  - job_name: "service_a"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["service_a:8001"]
+
+  - job_name: "service_b"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["service_b:8002"]
