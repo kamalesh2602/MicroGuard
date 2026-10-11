@@ -1,6 +1,7 @@
 
 services:
   gateway:
+    image: microguard-gateway:latest
     build: .
     command: uvicorn gateway.main:app --host 0.0.0.0 --port 8000
     ports:
@@ -11,6 +12,7 @@ services:
       - service_a
 
   service_a:
+    image: microguard-service_a:latest
     build: .
     command: uvicorn services.service_a.main:app --host 0.0.0.0 --port 8001
     environment:
@@ -19,12 +21,22 @@ services:
       - service_b
 
   service_b:
+    image: microguard-service_b:latest
     build: .
     command: uvicorn services.service_b.main:app --host 0.0.0.0 --port 8002
     environment:
       FAULT_DELAY_SECONDS: "0"
       FAULT_ERROR_RATE: "0"
 
+  monolith:
+    image: microguard-monolith:latest
+    build: .
+    command: uvicorn monolith.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+    environment:
+      FAULT_DELAY_SECONDS: "0"
+      FAULT_ERROR_RATE: "0"
 
   prometheus:
     image: prom/prometheus
@@ -36,6 +48,7 @@ services:
       - gateway
       - service_a
       - service_b
+      - monolith
   
   grafana:
     image: grafana/grafana
@@ -52,9 +65,12 @@ services:
       - "8089:8089"
     volumes:
       - ./locustfile.py:/mnt/locust/locustfile.py:ro
-    command: -f /mnt/locust/locustfile.py --host http://gateway:8000
+    environment:
+      - LOCUST_HOST=${LOCUST_HOST:-http://gateway:8000}
+    command: -f /mnt/locust/locustfile.py --host ${LOCUST_HOST:-http://gateway:8000}
     depends_on:
       - gateway
+      - monolith
 
 
 volumes:

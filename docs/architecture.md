@@ -94,9 +94,19 @@ flowchart LR
 - **Container Port:** `8089` | **Host Port:** `8089` (`http://localhost:8089`)
 - **Role:** Load testing framework.
 - **Responsibilities:**
-  - Executes concurrent user workloads against `http://gateway:8000/process`.
+  - Executes concurrent user workloads against either `http://gateway:8000/process` or `http://monolith:8001/process`.
   - Measures request throughput, error counts, and latency distribution percentiles (Median, P95).
   - Runs inside a Linux container to bypass Windows-specific DLL execution restrictions.
+
+### 7. Monolith Baseline (`monolith/main.py`)
+- **Container Port:** `8001` | **Host Port:** `8001` (`http://localhost:8001`)
+- **Role:** Standalone monolithic baseline for empirical performance comparison against the microservices pipeline.
+- **Responsibilities:**
+  - Implements equivalent business processing to the Gateway -> Service A -> Service B chain, executed in-process.
+  - Replaces inter-service HTTP hops and connection pooling with direct in-memory Python function invocations.
+  - Produces an identical JSON response schema for successful requests to enable fair comparison.
+  - Exposes `/`, `/health`, `/process`, and `/metrics` (via `prometheus-fastapi-instrumentator`).
+  - Does NOT implement a circuit breaker, preserving standard monolithic execution semantics.
 
 ---
 
@@ -108,7 +118,11 @@ The table below outlines all endpoints across the system and their access bounda
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway** | `8000` | `8000` | `GET /` | Client ping / root service metadata |
 | | | | `GET /health` | Health check endpoint (`{"status": "healthy"}`) |
-| | | | `GET /process` | Public business workflow entry point |
+| | | | `GET /process` | Public microservices workflow entry point |
+| | | | `GET /metrics` | Prometheus metrics scrape endpoint |
+| **Monolith Baseline** | `8001` | `8001` | `GET /` | Client ping / root service metadata |
+| | | | `GET /health` | Health check with UTC ISO timestamp |
+| | | | `GET /process` | In-process unified processing entry point |
 | | | | `GET /metrics` | Prometheus metrics scrape endpoint |
 | **Service A** | *None* | `8001` | `GET /` | Internal root service metadata |
 | | | | `GET /health` | Internal health check |
@@ -125,7 +139,7 @@ The table below outlines all endpoints across the system and their access bounda
 | **Locust** | `8089` | `8089` | `GET /` | Locust Web UI for load test control |
 
 > [!NOTE]
-> Services A and B do not expose host ports in `docker-compose.yml`. They reside exclusively on the private Docker bridge network. External traffic can only reach them through the Gateway on port `8000`.
+> Services A and B do not expose host ports in `docker-compose.yml`. They reside exclusively on the private Docker bridge network. External traffic can only reach them through the Gateway on port `8000`. The Monolith Baseline binds host port `8001` for direct isolated benchmarking.
 
 ---
 
@@ -214,6 +228,47 @@ sequenceDiagram
 
 ---
 
+### 3. Monolithic Request Lifecycle (In-Process Baseline)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant M as Monolith (:8001)
+    Note over M: Single FastAPI process & event loop
+
+    Client->>M: GET /process
+    Note over M: Calls _execute_stage_a()<br/>(direct async function call)
+    Note over M: Calls _execute_stage_b()<br/>(direct in-memory function call)
+    Note over M: Zero HTTP serialization / TCP overhead
+    M-->>Client: 200 OK JSON payload
+```
+
+1. **Client** issues `GET /process` directly to `http://localhost:8001/process`.
+2. **Monolith ASGI Server** dispatches to the FastAPI endpoint handler.
+3. The handler executes `_execute_stage_a()`, which invokes `_execute_stage_b()` within the same Python process and event loop.
+4. If fault injection is configured:
+   - `FAULT_DELAY_SECONDS`: simulated via `await asyncio.sleep()`.
+   - `FAULT_ERROR_RATE`: raises `HTTPException(status_code=500)` directly within the request handler.
+5. In normal conditions, the response returns HTTP `200 OK` with the exact JSON payload format matching the microservices gateway response.
+
+---
+
+## Architectural & Empirical Comparison
+
+To align with the research methodology of *Evaluating The Impact Of Cloud-Based Microservices Architecture On Application Performance*, the table below contrasts the microservices pipeline and the monolithic baseline:
+
+| Dimension | Microservices Pipeline (`:8000`) | Monolithic Baseline (`:8001`) | Research Impact |
+| :--- | :--- | :--- | :--- |
+| **Process Model** | 3 independent OS processes / containers (Gateway, Service A, Service B) | 1 OS process / container (`monolith`) | Lower process memory footprint and CPU context switching in monolith. |
+| **Inter-Component Transport** | Network I/O (TCP sockets over Docker bridge network, HTTP/1.1 via `httpx`) | Direct Python in-memory asynchronous function calls | Eliminates ~5-15ms network latency per hop and TCP packet overhead. |
+| **Data Serialization** | Multiple JSON serialize/deserialize cycles across service boundaries | Direct in-memory Python dictionaries (zero intermediate serialization) | Reduces CPU overhead during high request swarms. |
+| **Failure Handling** | Service A `aiobreaker` Circuit Breaker with 503 fast-fail isolation | Direct exception propagation (HTTP 500 on unhandled fault) | Microservices isolate downstream faults; monolith fails request immediately. |
+| **Telemetry & Metrics** | 3 separate Prometheus scrape jobs (`gateway`, `service_a`, `service_b`) | 1 unified Prometheus scrape job (`monolith`) | Per-service observability vs single-service consolidated metrics. |
+| **Scaling Granularity** | Each service can be horizontally scaled independently | Entire application must be scaled as a single unit | Microservices optimize resource allocation under asymmetric load. |
+
+---
+
 ## Next Steps
 
 - Review container setup in the [Docker Guide](docker.md).
@@ -223,3 +278,4 @@ sequenceDiagram
 - Explore breaker mechanics in [Fault Tolerance & Circuit Breakers](fault-tolerance.md).
 - Read the test run analysis in [Load Test Experiments](experiments.md).
 - Return to the [MicroGuard Root README](../README.md).
+

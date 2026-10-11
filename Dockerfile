@@ -10,6 +10,7 @@ RUN uv sync --frozen --no-dev --no-install-project --python 3.12
 
 COPY gateway ./gateway
 COPY services ./services
+COPY monolith ./monolith
 
 ENV PATH="/app/.venv/bin:$PATH"
 
