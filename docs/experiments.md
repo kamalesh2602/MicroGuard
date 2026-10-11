@@ -183,9 +183,39 @@ When evaluating these results, consider the following methodological boundaries:
 
 ---
 
+## Resource Utilization Comparison (Monolith vs. Microservices)
+
+In addition to latency and throughput, we empirically evaluate CPU and memory efficiency using [`measure_resources.ps1`](../measure_resources.ps1) and [`analyze_resources.py`](../analyze_resources.py).
+
+### Experimental Setup
+- **Workload:** 10 virtual users, spawn rate of 2 users/sec, duration of 30 seconds.
+- **Collection Engine:** Native `docker stats --no-stream --format json` sampled every 1.0s.
+- **Scope Distinction:**
+  - **Monolith Baseline:** `microguard-monolith-1`
+  - **Microservices Combined:** `microguard-gateway-1` + `microguard-service_a-1` + `microguard-service_b-1`
+  - **Infrastructure (Separated):** Prometheus, Grafana, Locust
+
+### Empirical Findings
+
+| Metric | Monolith Baseline | Microservices Combined | Delta (%) | Ratio (MS / Mono) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Mean CPU (%)** | 0.57% | 1.32% | +130.8% | **2.31x** |
+| **Peak CPU (%)** | 1.19% | 1.74% | +46.2% | **1.46x** |
+| **Mean Memory (MiB)** | 46.68 MiB | 149.59 MiB | +220.5% | **3.20x** |
+| **Peak Memory (MiB)** | 46.85 MiB | 150.24 MiB | +220.7% | **3.21x** |
+
+### Architectural Interpretation
+1. **Memory Redundancy:** The 3-tier microservices architecture consumes **3.2x more RAM** due to triplicate Python 3.12 runtimes, virtual environments, ASGI event loops, and duplicated base libraries.
+2. **CPU Overhead:** The microservices pipeline expends **2.3x more CPU cycles** handling inter-container HTTP/1.1 TCP connections, connection pool housekeeping, and JSON serialization cycles.
+
+For complete measurement steps and methodology details, refer to the [Resource Utilization Guide](resource-utilization.md).
+
+---
+
 ## Related Documentation
 
 - Architectural structure: [Architecture Guide](architecture.md)
+- Resource utilization guide: [Resource Utilization Guide](resource-utilization.md)
 - Docker configuration: [Docker Guide](docker.md)
 - Prometheus metric definitions: [Prometheus Monitoring](prometheus.md)
 - Grafana dashboard panels: [Grafana Dashboards](grafana.md)

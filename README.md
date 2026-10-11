@@ -93,11 +93,14 @@ microguard/
 ├── pyproject.toml               # Python project configuration and dependencies
 ├── uv.lock                      # Exact locked dependency versions
 ├── analyze_results.py           # Pandas script comparing normal vs fault load tests
+├── analyze_resources.py         # Pandas script comparing CPU and memory utilization
+├── measure_resources.ps1        # PowerShell sampler collecting Docker stats during benchmarks
 ├── locustfile.py                # Locust load testing scenario definition
 ├── README.md                    # Project landing page and documentation hub
 │
 ├── docs/                        # Complete technical documentation suite
 │   ├── architecture.md          # System architecture, topology, and request lifecycle
+│   ├── resource-utilization.md  # CPU and memory profiling guide and measurement units
 │   ├── docker.md                # Docker guide, container networking, and commands
 │   ├── prometheus.md            # Prometheus scraping, metrics, and PromQL queries
 │   ├── grafana.md               # Grafana dashboards, panels, and value mappings
@@ -334,11 +337,52 @@ Saved: results/comparison_report.csv
 
 ---
 
+### Test 6: Measure Resource Utilization (CPU & Memory Profiling)
+
+MicroGuard includes a native Docker statistics collection script ([`measure_resources.ps1`](measure_resources.ps1)) and analysis pipeline ([`analyze_resources.py`](analyze_resources.py)) to evaluate resource efficiency without third-party APM overhead.
+
+#### 1. Measure the Monolith Baseline
+Run a 30-second benchmark targeting the Monolith while collecting 1-second `docker stats` samples:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSeconds 30 -Target "monolith" -RunLocust
+```
+
+#### 2. Measure the Microservices Pipeline
+Run the identical 30-second benchmark workload targeting the Microservices Gateway:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSeconds 30 -Target "microservices" -RunLocust
+```
+
+#### 3. Compare Both Architecture Runs
+Pass the two generated CSV files to `analyze_resources.py`:
+```powershell
+.venv\Scripts\python.exe analyze_resources.py results/resource_usage_monolith_<timestamp>.csv results/resource_usage_microservices_<timestamp>.csv
+```
+
+Output:
+```text
+Comparing Monolith vs Microservices...
+
+           Metric  Monolith Baseline  Microservices Combined  Delta (%)  Ratio (MS / Mono)
+     Mean CPU (%)               0.57                    1.32      130.8               2.31
+     Peak CPU (%)               1.19                    1.74       46.2               1.46
+Mean Memory (MiB)              46.68                  149.59      220.5               3.20
+Peak Memory (MiB)              46.85                  150.24      220.7               3.21
+
+Saved comparison report to: results/resource_comparison_report.csv
+```
+
+> [!NOTE]
+> Application totals strictly measure the Monolith container against the sum of the Gateway, Service A, and Service B. Infrastructure containers (Prometheus, Grafana, and Locust) are reported separately and excluded from application totals.
+
+---
+
 ## Detailed Documentation Hub
 
 For in-depth explanations, configuration breakdowns, and troubleshooting procedures, refer to the documentation suite in [`docs/`](docs/):
 
 - 📖 [**Architecture & Request Lifecycle**](docs/architecture.md) — Detailed service topologies, API endpoints, and sequence diagrams.
+- 📊 [**Resource Utilization Guide**](docs/resource-utilization.md) — CPU/memory measurement units, sampling methodology, and comparative analysis.
 - 🐳 [**Docker & Container Orchestration**](docs/docker.md) — Container fundamentals, Compose networking, named volumes, and PowerShell commands.
 - 📈 [**Prometheus Metrics & Monitoring**](docs/prometheus.md) — Scrape configurations, metric types, and PromQL query walkthroughs.
 - 📊 [**Grafana Dashboards & Visualizations**](docs/grafana.md) — Panel explanations, PromQL queries, value mappings, and persistence.
