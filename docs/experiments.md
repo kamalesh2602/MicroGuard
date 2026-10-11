@@ -179,36 +179,104 @@ When evaluating these results, consider the following methodological boundaries:
 1. **Different Total Request Counts:** The Normal test captured 380 requests, while the Fault Injection test captured 484 requests because the tests were manually stopped after slightly different run durations (~42 seconds vs ~52 seconds).
 2. **Local Machine Variable Load:** Tests were executed locally on Windows with Docker Desktop sharing host CPU and memory with background OS tasks, rather than an isolated cloud benchmark environment.
 3. **Absence of Fallback Responses:** In this implementation, the circuit breaker returns an HTTP 503 fast failure. In advanced production systems, an open circuit breaker often returns a cached fallback or degraded payload rather than an outright error.
-4. **Single-Node Topology:** All containers ran on the same physical host machine. Network latency between containers reflects local loopback virtual switching, not real datacenter network hops.
+4. **Single-Node Topology:** All containers ran on the same physical host machine. Network latency between containers reflects local loopback virtual switching, not real datacenter---
+
+## Resource & Architecture Benchmark (Monolith vs. Microservices)
+
+In addition to resilience testing, MicroGuard empirically evaluates the operational tradeoffs between the **Monolithic Baseline** and the **Microservices Pipeline** in alignment with the research paper *Evaluating The Impact Of Cloud-Based Microservices Architecture On Application Performance*.
+
+### Experimental Setup & Workload Settings
+- **Workload:** 10 virtual users, spawn rate of 2 users/sec, run duration of 30 seconds (`locustfile.py`).
+- **Wait Time:** Random uniform between 0.5s and 1.5s per virtual user.
+- **Targets:**
+  - Monolith: `http://monolith:8001/process`
+  - Microservices Gateway: `http://gateway:8000/process`
+- **Collection Engine:** Native Docker stats (`docker stats --no-stream --format json`) sampled every 1.0s, synchronized to active Locust container execution (`measure_resources.ps1`).
+- **Scope Distinction:**
+  - **Monolith Baseline:** Exactly 1 container (`microguard-monolith-1`).
+  - **Microservices Deployment:** Combined sum of 3 containers (`microguard-gateway-1`, `microguard-service_a-1`, `microguard-service_b-1`).
+  - **Infrastructure Tier (Separated):** Prometheus (`microguard-prometheus-1`), Grafana (`microguard-grafana-1`), and Locust runner container are tracked separately and excluded from application totals.
 
 ---
 
-## Resource Utilization Comparison (Monolith vs. Microservices)
+### Empirical Findings (Validated 30-Second Benchmark Run)
 
-In addition to latency and throughput, we empirically evaluate CPU and memory efficiency using [`measure_resources.ps1`](../measure_resources.ps1) and [`analyze_resources.py`](../analyze_resources.py).
-
-### Experimental Setup
-- **Workload:** 10 virtual users, spawn rate of 2 users/sec, duration of 30 seconds.
-- **Collection Engine:** Native `docker stats --no-stream --format json` sampled every 1.0s.
-- **Scope Distinction:**
-  - **Monolith Baseline:** `microguard-monolith-1`
-  - **Microservices Combined:** `microguard-gateway-1` + `microguard-service_a-1` + `microguard-service_b-1`
-  - **Infrastructure (Separated):** Prometheus, Grafana, Locust
-
-### Empirical Findings
+#### 1. Resource Utilization (`results/resource_comparison_report.csv`)
 
 | Metric | Monolith Baseline | Microservices Combined | Delta (%) | Ratio (MS / Mono) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Mean CPU (%)** | 0.57% | 1.32% | +130.8% | **2.31x** |
-| **Peak CPU (%)** | 1.19% | 1.74% | +46.2% | **1.46x** |
-| **Mean Memory (MiB)** | 46.68 MiB | 149.59 MiB | +220.5% | **3.20x** |
-| **Peak Memory (MiB)** | 46.85 MiB | 150.24 MiB | +220.7% | **3.21x** |
+| **Mean CPU (%)** | 2.35% | 34.02% | +1349.9% | **14.50x** |
+| **Peak CPU (%)** | 3.27% | 45.09% | +1278.9% | **13.79x** |
+| **Mean Memory (MiB)** | 47.81 MiB | 152.33 MiB | +218.6% | **3.19x** |
+| **Peak Memory (MiB)** | 48.04 MiB | 152.67 MiB | +217.8% | **3.18x** |
 
-### Architectural Interpretation
-1. **Memory Redundancy:** The 3-tier microservices architecture consumes **3.2x more RAM** due to triplicate Python 3.12 runtimes, virtual environments, ASGI event loops, and duplicated base libraries.
-2. **CPU Overhead:** The microservices pipeline expends **2.3x more CPU cycles** handling inter-container HTTP/1.1 TCP connections, connection pool housekeeping, and JSON serialization cycles.
+*Infrastructure Baseline (separate): Mean CPU 3.42%–3.56%, Mean Memory ~484 MiB (Prometheus, Grafana, Locust).*
 
-For complete measurement steps and methodology details, refer to the [Resource Utilization Guide](resource-utilization.md).
+#### 2. Workload & Latency Metrics (`results/locust_architecture_report.csv`)
+
+| Architecture Tier | Total Requests | Failures | Failure Rate (%) | Avg Latency (ms) | Median Latency (ms) | P95 Latency (ms) | Throughput (req/s) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Monolith Baseline** | 291 | 0 | 0.00% | 4.60 ms | 4.0 ms | 8.0 ms | 10.00 |
+| **Microservices Pipeline** | 257 | 0 | 0.00% | 55.26 ms | 45.0 ms | 110.0 ms | 8.83 |
+
+---
+
+### How to Interpret the Metrics
+
+1. **CPU Usage (14.5x higher in microservices):**
+   - The monolith handles end-to-end processing within a single Python process via local in-memory async function invocation.
+   - The microservices architecture incurs significant CPU amplification: the Gateway must handle client TCP sockets, parse HTTP requests, create an outbound `httpx` async request to Service A over Docker bridge networking, which in turn parses the payload and initiates another HTTP connection to Service B. JSON serialization, HTTP header parsing, and socket I/O are performed three times across three independent ASGI process event loops.
+
+2. **Memory Footprint (3.19x higher in microservices):**
+   - The monolith runs within a single container requiring ~48 MiB of RSS memory.
+   - The microservices architecture requires ~152 MiB combined (~55 MiB Gateway + ~53 MiB Service A + ~44 MiB Service B). This overhead directly reflects running three distinct Python 3.12 runtimes, three Uvicorn process instances, and duplicate standard libraries in memory.
+
+3. **Latency Profile (12.0x average latency, 13.8x P95 latency in microservices):**
+   - **Monolith:** Average latency of 4.60 ms, P95 of 8.0 ms. Zero network socket hops and zero serialization overhead.
+   - **Microservices:** Average latency of 55.26 ms, P95 of 110.0 ms. Includes two full inter-container HTTP/1.1 network round-trips across Linux bridge interfaces and context switches across three containers.
+
+4. **Throughput (10.0 req/s vs 8.83 req/s):**
+   - With 10 virtual users and client wait times between 0.5s and 1.5s, the monolith achieves near theoretical maximum client throughput (10.0 req/s) due to negligible sub-5ms round trips.
+   - The microservices pipeline achieves 8.83 req/s because the 55ms round-trip latency marginally extends client cycle duration.
+
+---
+
+### Limitations & Deviations from the Reference Paper
+
+When comparing these findings with *Evaluating The Impact Of Cloud-Based Microservices Architecture On Application Performance*, note the following methodological differences:
+
+1. **Cloud Multi-Node Infrastructure vs Local Single-Host Containers:**
+   - The reference paper evaluated distributed multi-node cloud deployments (AWS EC2 / ECS clusters) with cross-availability-zone networking, multi-tenant hypervisors, and elastic load balancers.
+   - MicroGuard runs on a single developer workstation under Docker Desktop with WSL2 Linux kernel virtualization. Inter-service networking traverses a local Docker bridge interface rather than physical cloud networking switches.
+2. **Persistence & Database Layers:**
+   - The reference paper utilized cloud-managed relational databases and distributed persistence engines.
+   - MicroGuard isolates application and architectural communication overhead using in-memory state and mock processing to prevent database I/O bottlenecks from masking architectural differences.
+3. **No Unqualified Replication Claims:**
+   - Where the reference paper leaves specific hardware instances, network topologies, or compiler optimization flags unspecified, MicroGuard reports only measured local empirical metrics rather than claiming numerical identity with cloud-scale benchmarks.
+
+---
+
+### Exact PowerShell Reproduction Commands
+
+To reproduce the load testing and resource benchmarking experiments from scratch:
+
+```powershell
+# 1. Start all containers
+docker compose up -d
+docker compose ps
+
+# 2. Run Monolith Baseline benchmark (30 seconds, 10 users, 2 spawn rate)
+powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSeconds 30 -Target "monolith" -RunLocust
+
+# 3. Run Microservices Pipeline benchmark (identical parameters)
+powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSeconds 30 -Target "microservices" -RunLocust
+
+# 4. Analyze Resource Utilization (CPU & Memory)
+.venv\Scripts\python.exe analyze_resources.py --monolith results\resource_usage_monolith_<TIMESTAMP>.csv --microservices results\resource_usage_microservices_<TIMESTAMP>.csv
+
+# 5. Analyze Workload & Latency Statistics
+.venv\Scripts\python.exe analyze_results.py --monolith results\monolith_<TIMESTAMP>_stats.csv --microservices results\microservices_<TIMESTAMP>_stats.csv
+```
 
 ---
 

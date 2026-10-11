@@ -4,6 +4,7 @@ from locust import HttpUser, task, between, events
 # Target service URL mapping for convenience
 SERVICE_TARGETS = {
     "gateway": "http://gateway:8000",
+    "microservices": "http://gateway:8000",
     "monolith": "http://monolith:8001",
     "gateway-local": "http://localhost:8000",
     "monolith-local": "http://localhost:8001",

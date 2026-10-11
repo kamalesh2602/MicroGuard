@@ -118,18 +118,31 @@ Pass the two generated CSV files to `analyze_resources.py`:
 ## Sample Experimental Output
 
 ```text
-Comparing Monolith [results/resource_usage_monolith_20261011_212300.csv] vs Microservices [results/resource_usage_microservices_20261011_212333.csv]...
+Comparing Monolith [results/resource_usage_monolith_20261011_213219.csv] vs Microservices [results/resource_usage_microservices_20261011_213256.csv]...
 
            Metric  Monolith Baseline  Microservices Combined  Delta (%)  Ratio (MS / Mono)
-     Mean CPU (%)               2.10                   36.42     1636.5              17.36
-     Peak CPU (%)               2.96                   73.81     2393.6              24.94
-Mean Memory (MiB)              47.29                  151.13      219.6               3.20
-Peak Memory (MiB)              47.65                  152.37      219.8               3.20
+     Mean CPU (%)               2.35                   34.02     1349.9              14.50
+     Peak CPU (%)               3.27                   45.09     1278.9              13.79
+Mean Memory (MiB)              47.81                  152.33      218.6               3.19
+Peak Memory (MiB)              48.04                  152.67      217.8               3.18
 
 Saved comparison report to: results/resource_comparison_report.csv
 ```
 
+### Corresponding Workload & Latency Comparison (`analyze_results.py`):
+```text
+MicroGuard Architecture Benchmark: Monolith vs Microservices
+
+                  Test  Requests  Failures  Failure Rate (%)  Average Latency (ms)  Median Latency (ms)  P95 Latency (ms)  Requests/sec
+     Monolith Baseline       291         0               0.0                  4.60                  4.0               8.0         10.00
+Microservices Pipeline       257         0               0.0                 55.26                 45.0             110.0          8.83
+
+Saved report to: results/locust_architecture_report.csv
+```
+
 ### Interpretation:
-1. **Memory Footprint:** The microservices architecture incurs an approximately **3.2x memory overhead** (~151 MiB vs ~47 MiB) due to hosting 3 isolated Python runtimes, ASGI server instances, and dependency trees.
-2. **CPU Utilization:** Inter-service HTTP serialization, networking, and multi-tier routing generate higher aggregate CPU utilization relative to the monolith's in-process asynchronous function dispatch.
+1. **Memory Footprint:** The microservices architecture incurs an approximately **3.2x memory overhead** (~152 MiB vs ~48 MiB) due to hosting 3 isolated Python runtimes, ASGI server instances, and dependency trees.
+2. **CPU Utilization:** Inter-service HTTP serialization, TCP connection management, and multi-tier routing generate a **14.5x mean CPU increase** (34.02% vs 2.35%) relative to the monolith's in-process asynchronous function dispatch.
+3. **Latency:** Microservices exhibit a **12.0x average latency increase** (55.26 ms vs 4.60 ms) and a **13.8x P95 latency increase** (110.0 ms vs 8.0 ms) due to two inter-container network round trips.
+
 

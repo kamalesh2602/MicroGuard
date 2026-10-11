@@ -354,9 +354,13 @@ powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSecond
 ```
 
 #### 3. Compare Both Architecture Runs
-Pass the two generated CSV files to `analyze_resources.py`:
+Pass the two generated CSV files to `analyze_resources.py` and `analyze_results.py`:
 ```powershell
-.venv\Scripts\python.exe analyze_resources.py results/resource_usage_monolith_<timestamp>.csv results/resource_usage_microservices_<timestamp>.csv
+# Resource comparison (CPU & Memory)
+.venv\Scripts\python.exe analyze_resources.py --monolith results/resource_usage_monolith_<timestamp>.csv --microservices results/resource_usage_microservices_<timestamp>.csv
+
+# Workload and latency comparison
+.venv\Scripts\python.exe analyze_results.py --monolith results/monolith_<timestamp>_stats.csv --microservices results/microservices_<timestamp>_stats.csv
 ```
 
 Output:
@@ -364,10 +368,10 @@ Output:
 Comparing Monolith vs Microservices...
 
            Metric  Monolith Baseline  Microservices Combined  Delta (%)  Ratio (MS / Mono)
-     Mean CPU (%)               0.57                    1.32      130.8               2.31
-     Peak CPU (%)               1.19                    1.74       46.2               1.46
-Mean Memory (MiB)              46.68                  149.59      220.5               3.20
-Peak Memory (MiB)              46.85                  150.24      220.7               3.21
+     Mean CPU (%)               2.35                   34.02     1349.9              14.50
+     Peak CPU (%)               3.27                   45.09     1278.9              13.79
+Mean Memory (MiB)              47.81                  152.33      218.6               3.19
+Peak Memory (MiB)              48.04                  152.67      217.8               3.18
 
 Saved comparison report to: results/resource_comparison_report.csv
 ```
