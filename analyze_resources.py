@@ -92,21 +92,59 @@ def compare_two_runs(monolith_file: str, microservices_file: str) -> pd.DataFram
     return comparison
 
 
-def main():
-    args = sys.argv[1:]
+def parse_args(argv=None):
+    """Parse command line arguments supporting positional and named flag modes."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="MicroGuard Resource Utilization Analysis Pipeline."
+    )
+    parser.add_argument(
+        "files",
+        nargs="*",
+        help="Optional positional CSV file paths (1 file for single summary, 2 for monolith vs microservices comparison)."
+    )
+    parser.add_argument(
+        "--monolith",
+        help="Path to monolith resource timeseries CSV."
+    )
+    parser.add_argument(
+        "--microservices",
+        help="Path to microservices resource timeseries CSV."
+    )
+    return parser.parse_args(argv)
 
-    if len(args) == 2:
-        print(f"\nComparing Monolith [{args[0]}] vs Microservices [{args[1]}]...\n")
-        report = compare_two_runs(args[0], args[1])
+
+def main():
+    parsed = parse_args()
+
+    # Case 1: Explicit --monolith and --microservices flags
+    if parsed.monolith and parsed.microservices:
+        print(f"\nComparing Monolith [{parsed.monolith}] vs Microservices [{parsed.microservices}]...\n")
+        report = compare_two_runs(parsed.monolith, parsed.microservices)
         print(report.to_string(index=False))
-        out_file = "results/resource_comparison_report.csv"
+        out_file = os.path.join("results", "resource_comparison_report.csv")
         report.to_csv(out_file, index=False)
         print(f"\nSaved comparison report to: {out_file}\n")
         return
 
+    # Case 2: Two positional arguments
+    if len(parsed.files) == 2:
+        print(f"\nComparing Monolith [{parsed.files[0]}] vs Microservices [{parsed.files[1]}]...\n")
+        report = compare_two_runs(parsed.files[0], parsed.files[1])
+        print(report.to_string(index=False))
+        out_file = os.path.join("results", "resource_comparison_report.csv")
+        report.to_csv(out_file, index=False)
+        print(f"\nSaved comparison report to: {out_file}\n")
+        return
+
+    # Case 3: Single file via flag or positional
     target_file = None
-    if len(args) == 1:
-        target_file = args[0]
+    if parsed.monolith:
+        target_file = parsed.monolith
+    elif parsed.microservices:
+        target_file = parsed.microservices
+    elif len(parsed.files) == 1:
+        target_file = parsed.files[0]
     else:
         pattern = os.path.join("results", "resource_usage_*.csv")
         files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
@@ -143,3 +181,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

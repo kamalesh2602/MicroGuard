@@ -10,7 +10,7 @@ This guide details the reproducible resource-utilization measurement workflow im
 
 1. **Native Docker Statistics Engine:**
    - Resource metrics are collected directly via the Docker daemon using `docker stats --no-stream --format json`.
-   - **Zero Added Overhead:** No external profiling agents, sidecars, or heavy APM libraries are injected into the benchmarked containers, preserving workload authenticity.
+   - **Non-Invasive Out-of-Band Sampling:** No external profiling agents, sidecars, or invasive bytecode hooks are injected into the benchmarked application containers, avoiding intra-process execution distortion.
 
 2. **Architectural Scope Separation:**
    - **Monolith Baseline:** Exactly one container (`microguard-monolith-1`).
@@ -23,7 +23,7 @@ This guide details the reproducible resource-utilization measurement workflow im
 3. **Measurement Units:**
    - **CPU Usage (`%`):** Expressed as a percentage of a single logical CPU core. For example, `100.0%` represents full saturation of one CPU thread. In multi-container microservice deployments, combined CPU is the arithmetic sum of the three container CPU percentages.
    - **Memory Usage (`MiB`):** Converted to standard Mebibytes ($1\text{ MiB} = 1,048,576\text{ bytes}$) from Docker's raw memory strings (`MiB`, `GiB`, `kB`, `B`). Combined microservices memory is the arithmetic sum of the three container memory footprints.
-   - **Sampling Interval (`seconds`):** Default is `1s` to provide fine-grained timeseries resolution during benchmark swarms without imposing significant observer effect.
+   - **Sampling Interval (`seconds`):** Default is `1s` to provide fine-grained timeseries resolution during benchmark swarms without placing heavy load on the Docker daemon.
 
 ---
 
@@ -37,8 +37,9 @@ This guide details the reproducible resource-utilization measurement workflow im
    - Under Docker Desktop on Windows, containers execute within a lightweight WSL 2 Linux VM. CPU utilization reflects the virtual CPU time allocated by the Hyper-V/WSL2 hypervisor.
    - Background Windows host activity does not directly affect container cgroup metrics, but host CPU throttling can introduce minor variance across runs.
 
-3. **Sampling Resolution Trade-off:**
-   - Sampling every 1 second accurately captures load surges and circuit breaker state changes while keeping `docker stats` query overhead below 0.1% CPU.
+3. **Sampling Resolution & Observer Considerations:**
+   - Sampling every 1 second accurately captures load surges and circuit breaker state changes.
+   - Metrics collection runs out-of-band against the Docker daemon engine. The observer cost of polling container statistics is borne by the host Docker daemon process and PowerShell caller rather than within the container cgroup limits. However, observer overhead is non-zero on the host machine and depends on hardware capabilities, WSL2 CPU allocation, and the number of active containers.
 
 ---
 
@@ -48,14 +49,22 @@ This guide details the reproducible resource-utilization measurement workflow im
 The primary collection tool located at the repository root.
 
 **Parameters:**
-- `-DurationSeconds <int>`: Total measurement duration in seconds (default: `30`). Set to `0` to run indefinitely until `Ctrl+C`.
+- `-DurationSeconds <int>`: Total measurement duration in seconds (default: `30`). Set to `0` to run indefinitely until `Ctrl+C` (in standalone mode). When `-RunLocust` is enabled, this configures the Locust load duration (`--run-time`).
 - `-IntervalSeconds <int>`: Pause duration between successive `docker stats` queries (default: `1`).
-- `-Target <string>`: Tag identifying the benchmark run (`monolith`, `microservices`, or `all`).
-- `-RunLocust`: Switch flag that automatically triggers a headless containerized Locust run during the measurement.
+- `-Target <string>`: Architecture or workload label (`monolith`, `microservices`, or `all`). When `-RunLocust` is enabled, must be either `monolith` or `microservices`.
+- `-RunLocust`: Switch flag that automatically launches a headless containerized Locust load test synchronized with the resource sampling.
 - `-LocustUsers <int>`: Simulated concurrent users (default: `10`).
 - `-LocustSpawnRate <int>`: User spawn rate per second (default: `2`).
-- `-OutputFile <string>`: Output path for the raw time-series CSV.
-- `-SummaryFile <string>`: Output path for the statistical summary CSV.
+- `-OutputFile <string>`: Output path for the raw time-series CSV (defaults to `results/resource_usage_<Target>_<Timestamp>.csv`).
+- `-SummaryFile <string>`: Output path for the statistical summary CSV (defaults to `results/resource_summary_<Target>_<Timestamp>.csv`).
+
+**Locust Benchmark Synchronization Lifecycle:**
+When `-RunLocust` is specified, `measure_resources.ps1` enforces strict synchronization with the workload lifecycle:
+1. **Dynamic Target Routing:** Maps `-Target monolith` to `http://monolith:8001` and `-Target microservices` to `http://gateway:8000`.
+2. **Pre-Sampling Readiness Wait:** Launches a detached headless Locust runner container (`docker compose run -d ...`) with `-v ./results:/mnt/locust/results` and polls `docker inspect` until the container reaches `State.Status == "running"`. Sampling only begins once Locust is actively running, preventing idle pre-test intervals from skewing baseline averages.
+3. **Execution Interval Alignment:** The resource sampling loop continues while `State.Running == "true"` and terminates immediately when Locust finishes, ensuring the sampled window precisely covers the active load test.
+4. **Exit Code Validation:** The script inspects `State.ExitCode`. If non-zero, it displays the container logs, emits a terminal error, and aborts with a non-zero exit code so that failed tests are never reported as valid benchmarks.
+5. **Non-destructive Outputs:** Each run saves to timestamped files, ensuring prior benchmark CSVs are never overwritten.
 
 ### 2. `analyze_resources.py` (Pandas Analysis Script)
 Located at the root of the project to analyze and compare generated CSV files.
@@ -65,9 +74,13 @@ Located at the root of the project to analyze and compare generated CSV files.
   ```powershell
   .venv\Scripts\python.exe analyze_resources.py results/resource_usage_monolith_<timestamp>.csv
   ```
-- **Comparative Dual Run Analysis:**
+- **Comparative Dual Run Analysis (Positional or Named Flags):**
   ```powershell
+  # Using positional arguments
   .venv\Scripts\python.exe analyze_resources.py results/resource_usage_monolith_<timestamp>.csv results/resource_usage_microservices_<timestamp>.csv
+
+  # Using named flags
+  .venv\Scripts\python.exe analyze_resources.py --monolith results/resource_usage_monolith_<timestamp>.csv --microservices results/resource_usage_microservices_<timestamp>.csv
   ```
 
 ---
@@ -83,13 +96,13 @@ docker compose ps
 ```
 
 ### Step 2: Measure Monolithic Baseline
-Run a 30-second benchmark targeting the Monolith with automated resource sampling:
+Run a 30-second benchmark targeting the Monolith (`http://monolith:8001`) with automated resource sampling:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSeconds 30 -Target "monolith" -RunLocust
 ```
 
 ### Step 3: Measure Microservices Pipeline
-Run a 30-second benchmark targeting the Microservices Gateway with identical user load:
+Run a 30-second benchmark targeting the Microservices Gateway (`http://gateway:8000`) with identical user load:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSeconds 30 -Target "microservices" -RunLocust
 ```
@@ -97,7 +110,7 @@ powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSecond
 ### Step 4: Compare Results
 Pass the two generated CSV files to `analyze_resources.py`:
 ```powershell
-.venv\Scripts\python.exe analyze_resources.py results/resource_usage_monolith_<timestamp>.csv results/resource_usage_microservices_<timestamp>.csv
+.venv\Scripts\python.exe analyze_resources.py --monolith results/resource_usage_monolith_<timestamp>.csv --microservices results/resource_usage_microservices_<timestamp>.csv
 ```
 
 ---
@@ -105,17 +118,18 @@ Pass the two generated CSV files to `analyze_resources.py`:
 ## Sample Experimental Output
 
 ```text
-Comparing Monolith [results/resource_usage_monolith.csv] vs Microservices [results/resource_usage_microservices.csv]...
+Comparing Monolith [results/resource_usage_monolith_20261011_212300.csv] vs Microservices [results/resource_usage_microservices_20261011_212333.csv]...
 
            Metric  Monolith Baseline  Microservices Combined  Delta (%)  Ratio (MS / Mono)
-     Mean CPU (%)               0.57                    1.32      130.8               2.31
-     Peak CPU (%)               1.19                    1.74       46.2               1.46
-Mean Memory (MiB)              46.68                  149.59      220.5               3.20
-Peak Memory (MiB)              46.85                  150.24      220.7               3.21
+     Mean CPU (%)               2.10                   36.42     1636.5              17.36
+     Peak CPU (%)               2.96                   73.81     2393.6              24.94
+Mean Memory (MiB)              47.29                  151.13      219.6               3.20
+Peak Memory (MiB)              47.65                  152.37      219.8               3.20
 
 Saved comparison report to: results/resource_comparison_report.csv
 ```
 
 ### Interpretation:
-1. **Memory Footprint:** The microservices architecture incurs an approximately **3.2x memory overhead** (~150 MiB vs ~47 MiB) due to hosting 3 isolated Python runtimes, ASGI server instances, and dependency trees.
-2. **CPU Utilization:** Inter-service HTTP serialization and network socket handling generate a **2.3x CPU increase** relative to the monolith's in-process asynchronous function dispatch.
+1. **Memory Footprint:** The microservices architecture incurs an approximately **3.2x memory overhead** (~151 MiB vs ~47 MiB) due to hosting 3 isolated Python runtimes, ASGI server instances, and dependency trees.
+2. **CPU Utilization:** Inter-service HTTP serialization, networking, and multi-tier routing generate higher aggregate CPU utilization relative to the monolith's in-process asynchronous function dispatch.
+

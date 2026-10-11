@@ -65,6 +65,7 @@ services:
       - "8089:8089"
     volumes:
       - ./locustfile.py:/mnt/locust/locustfile.py:ro
+      - ./results:/mnt/locust/results
     environment:
       - LOCUST_HOST=${LOCUST_HOST:-http://gateway:8000}
     command: -f /mnt/locust/locustfile.py --host ${LOCUST_HOST:-http://gateway:8000}
