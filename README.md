@@ -59,10 +59,6 @@ flowchart LR
 - **Configurable Fault Injection:** Adjust error rate (`FAULT_ERROR_RATE`) and latency (`FAULT_DELAY_SECONDS`) in Service B and the monolith via environment variables.
 - **Containerized Load Testing:** Locust load test runs inside a Linux Docker container to bypass host Windows Application Control DLL restrictions.
 - **Automated Experiment Analysis:** Python script (`analyze_results.py`) using Pandas to parse Locust CSV outputs and generate summary reports.
-- **Interactive Grafana Dashboards:** Pre-configured dashboard featuring Request Rate by Service, HTTP 5xx Error Rate, and Circuit Breaker State with custom value mappings.
-- **Configurable Fault Injection:** Adjust error rate (`FAULT_ERROR_RATE`) and latency (`FAULT_DELAY_SECONDS`) in Service B via environment variables.
-- **Containerized Load Testing:** Locust load test runs inside a Linux Docker container to bypass host Windows Application Control DLL restrictions.
-- **Automated Experiment Analysis:** Python script (`analyze_results.py`) using Pandas to parse Locust CSV outputs and generate summary reports.
 
 ---
 
@@ -317,7 +313,7 @@ docker compose run --rm locust -f /mnt/locust/locustfile.py --host http://gatewa
 
 ---
 
-### Test 5: Analyze Test Results with Pandas
+### Test 6: Analyze Test Results with Pandas
 Run the included analysis script in PowerShell:
 ```powershell
 .venv\Scripts\python.exe analyze_results.py
@@ -337,7 +333,7 @@ Saved: results/comparison_report.csv
 
 ---
 
-### Test 6: Measure Resource Utilization (CPU & Memory Profiling)
+### Test 7: Measure Resource Utilization (CPU & Memory Profiling)
 
 MicroGuard includes a native Docker statistics collection script ([`measure_resources.ps1`](measure_resources.ps1)) and analysis pipeline ([`analyze_resources.py`](analyze_resources.py)) to evaluate resource efficiency without third-party APM overhead.
 
