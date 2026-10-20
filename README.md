@@ -91,6 +91,7 @@ microguard/
 ├── analyze_results.py           # Pandas script comparing normal vs fault load tests
 ├── analyze_resources.py         # Pandas script comparing CPU and memory utilization
 ├── measure_resources.ps1        # PowerShell sampler collecting Docker stats during benchmarks
+├── steps_for_demo.md            # Step-by-step copy-paste walkthrough for live demos
 ├── locustfile.py                # Locust load testing scenario definition
 ├── README.md                    # Project landing page and documentation hub
 │
@@ -123,12 +124,16 @@ microguard/
 ├── results/
 │   ├── normal_load_stats.csv    # Locust export: Normal baseline test run
 │   ├── fault_injection_stats.csv# Locust export: Fault-injected test run
-│   └── comparison_report.csv    # Consolidated Pandas comparison output
+│   ├── comparison_report.csv    # Consolidated Pandas comparison output
+│   ├── resource_comparison_report.csv # Architecture CPU/memory comparison report
+│   └── locust_architecture_report.csv # Architecture workload/latency comparison report
 │
 ├── tests/
 │   ├── conftest.py              # Test configuration and pythonpath setup
 │   ├── test_microservices.py    # Unit tests for microservices pipeline
-│   └── test_monolith.py         # Unit tests for monolithic baseline
+│   ├── test_monolith.py         # Unit tests for monolithic baseline
+│   ├── test_analyze_results.py  # Unit tests for load test analysis pipeline
+│   └── test_resource_measurement.py # Unit tests for resource profiling pipeline
 │
 └── src/
     └── microguard/              # Python package metadata
@@ -233,44 +238,59 @@ You should see:
 ---
 
 ### Test 3: Inject Faults & Observe Circuit Breaker Trip (Microservices)
-1. In `docker-compose.yml`, change `FAULT_ERROR_RATE` under `service_b` to `"1.0"`:
-   ```yaml
-   service_b:
-     environment:
-       FAULT_DELAY_SECONDS: "0"
-       FAULT_ERROR_RATE: "1.0"
-   ```
-2. Recreate `service_b` in PowerShell:
+1. Enable 100% failure rate on Service B and recreate the container in PowerShell:
    ```powershell
-   docker compose up -d service_b
+   $env:FAULT_ERROR_RATE = "1.0"; docker compose up -d service_b
    ```
-3. Send 5 requests:
+   *(Alternatively, set `FAULT_ERROR_RATE: "1.0"` under `service_b` in `docker-compose.yml` and run `docker compose up -d service_b`).*
+2. Send 5 requests through the Gateway:
    ```powershell
    1..5 | ForEach-Object { curl.exe -s http://localhost:8000/process }
    ```
-4. **Observe:** The first 3 requests receive 500 from Service B. On the 3rd failure, the breaker trips to **Open**. Subsequent requests immediately return HTTP `503` fast failures.
-5. In Grafana ([http://localhost:3000](http://localhost:3000)), watch the **Circuit Breaker State** panel flash **Open** in bright red.
+3. **Observe:**
+   - Requests 1–3: Service B returns HTTP 500 internal errors, Service A logs failures, and the Gateway returns HTTP `503` (`{"detail":"Backend service unavailable"}`).
+   - On the 3rd failure (`fail_max=3`), Service A's circuit breaker trips to **Open**.
+   - Requests 4 and 5: Service A fails fast immediately with `CircuitBreakerError` without reaching Service B, and the Gateway returns HTTP `503` in milliseconds.
+4. Verify the circuit breaker state:
+   - In Grafana ([http://localhost:3000](http://localhost:3000)), watch the **Circuit Breaker State** panel flash **Open** in bright red.
+   - Or query Prometheus directly in PowerShell:
+     ```powershell
+     curl.exe -s "http://localhost:9090/api/v1/query?query=microguard_circuit_breaker_state"
+     ```
+     The query output will report `"value": [timestamp, "1"]`.
 
 ---
 
 ### Test 4: Safe Restoration to Normal Operation
-1. Reset `FAULT_ERROR_RATE` back to `"0"` in `docker-compose.yml`:
-   ```yaml
-   service_b:
-     environment:
-       FAULT_DELAY_SECONDS: "0"
-       FAULT_ERROR_RATE: "0"
-   ```
-2. Recreate `service_b`:
+1. Reset `FAULT_ERROR_RATE` back to `"0"` and recreate `service_b` in PowerShell:
    ```powershell
-   docker compose up -d service_b
+   $env:FAULT_ERROR_RATE = "0"; docker compose up -d service_b
    ```
-3. Wait **10 seconds** (the configured cooldown period).
-4. Send a request to trigger the trial probe:
+   *(Alternatively, reset `FAULT_ERROR_RATE: ${FAULT_ERROR_RATE:-0}` in `docker-compose.yml` and run `docker compose up -d service_b`).*
+2. Wait **10 seconds** (the configured cooldown period) for the circuit breaker to enter **Half-Open (2)**:
+   ```powershell
+   Start-Sleep -Seconds 10
+   ```
+3. Send a single probe request through the Gateway:
    ```powershell
    curl.exe -s http://localhost:8000/process
    ```
-5. The request succeeds, and the circuit breaker resets to **Closed** (0).
+4. The request succeeds with HTTP 200, and the circuit breaker resets to **Closed** (0):
+   ```json
+   {
+     "service": "service-a",
+     "message": "Request completed through Service B",
+     "dependency_response": {
+       "service": "service-b",
+       "message": "Request processed successfully"
+     }
+   }
+   ```
+5. Confirm that the Prometheus metric has reset to `0`:
+   ```powershell
+   curl.exe -s "http://localhost:9090/api/v1/query?query=microguard_circuit_breaker_state"
+   ```
+   Grafana will show the panel return to **Closed** in green.
 
 ---
 
@@ -325,10 +345,10 @@ Output:
 MicroGuard Load Test Comparison
 
            Test  Requests  Failures  Failure Rate (%)  Average Latency (ms)  Median Latency (ms)  P95 Latency (ms)  Requests/sec
-         Normal       380         0              0.00             43.790278                   35                82      9.013171
-Fault Injection       484       458             94.63             35.760761                   21                77      9.368385
+         Normal       380         0              0.00                 43.79                 35.0              82.0          9.01
+Fault Injection       484       458             94.63                 35.76                 21.0              77.0          9.37
 
-Saved: results/comparison_report.csv
+Saved report to: results/comparison_report.csv
 ```
 
 ---
@@ -350,18 +370,20 @@ powershell -ExecutionPolicy Bypass -File .\measure_resources.ps1 -DurationSecond
 ```
 
 #### 3. Compare Both Architecture Runs
-Pass the two generated CSV files to `analyze_resources.py` and `analyze_results.py`:
+Pass the generated CSV files (or the included benchmark sample files) to `analyze_resources.py` and `analyze_results.py`:
 ```powershell
 # Resource comparison (CPU & Memory)
-.venv\Scripts\python.exe analyze_resources.py --monolith results/resource_usage_monolith_<timestamp>.csv --microservices results/resource_usage_microservices_<timestamp>.csv
+.venv\Scripts\python.exe analyze_resources.py --monolith results/resource_usage_monolith_20261011_213219.csv --microservices results/resource_usage_microservices_20261011_213256.csv
 
 # Workload and latency comparison
-.venv\Scripts\python.exe analyze_results.py --monolith results/monolith_<timestamp>_stats.csv --microservices results/microservices_<timestamp>_stats.csv
+.venv\Scripts\python.exe analyze_results.py --monolith results/monolith_20261011_213219_stats.csv --microservices results/microservices_20261011_213256_stats.csv
 ```
 
-Output:
+Outputs:
+
+**Resource Utilization Summary (`analyze_resources.py`):**
 ```text
-Comparing Monolith vs Microservices...
+Comparing Monolith [results/resource_usage_monolith_20261011_213219.csv] vs Microservices [results/resource_usage_microservices_20261011_213256.csv]...
 
            Metric  Monolith Baseline  Microservices Combined  Delta (%)  Ratio (MS / Mono)
      Mean CPU (%)               2.35                   34.02     1349.9              14.50
@@ -372,14 +394,48 @@ Peak Memory (MiB)              48.04                  152.67      217.8         
 Saved comparison report to: results/resource_comparison_report.csv
 ```
 
+**Workload & Latency Benchmark (`analyze_results.py`):**
+```text
+MicroGuard Architecture Benchmark: Monolith vs Microservices
+
+                  Test  Requests  Failures  Failure Rate (%)  Average Latency (ms)  Median Latency (ms)  P95 Latency (ms)  Requests/sec
+     Monolith Baseline       291         0               0.0                  4.60                  4.0               8.0         10.00
+Microservices Pipeline       257         0               0.0                 55.26                 45.0             110.0          8.83
+
+Saved report to: results/locust_architecture_report.csv
+```
+
 > [!NOTE]
 > Application totals strictly measure the Monolith container against the sum of the Gateway, Service A, and Service B. Infrastructure containers (Prometheus, Grafana, and Locust) are reported separately and excluded from application totals.
 
 ---
 
+### Test 8: Run Automated Unit Tests
+Execute the full pytest test suite covering microservices, monolith baseline, circuit breaker behavior, and analysis pipelines:
+```powershell
+.venv\Scripts\python.exe -m pytest
+```
+*(or `python -m pytest`)*
+
+> [!NOTE]
+> On Windows environments with Application Control policies, invoking `python -m pytest` is recommended over calling `pytest.exe` directly.
+
+Output:
+```text
+tests\test_analyze_results.py .....                                      [ 19%]
+tests\test_microservices.py ...........                                  [ 61%]
+tests\test_monolith.py .....                                             [ 80%]
+tests\test_resource_measurement.py .....                                 [100%]
+======================= 26 passed in 5.36s =======================
+```
+
+---
+
 ## Detailed Documentation Hub
 
-For in-depth explanations, configuration breakdowns, and troubleshooting procedures, refer to the documentation suite in [`docs/`](docs/):
+For in-depth explanations, configuration breakdowns, and troubleshooting procedures, refer to the documentation suite in [`docs/`](docs/) and project guides:
+
+- 🚀 [**Live Demo Quick-Reference**](steps_for_demo.md) — Step-by-step copy-paste command checklist for live demonstrations.
 
 - 📖 [**Architecture & Request Lifecycle**](docs/architecture.md) — Detailed service topologies, API endpoints, and sequence diagrams.
 - 📊 [**Resource Utilization Guide**](docs/resource-utilization.md) — CPU/memory measurement units, sampling methodology, and comparative analysis.
