@@ -37,7 +37,7 @@ async def process():
     if FAULT_DELAY_SECONDS > 0:
         await asyncio.sleep(FAULT_DELAY_SECONDS)
 
-    if random.random() < FAULT_ERROR_RATE:
+    if FAULT_ERROR_RATE > 0 and random.random() < FAULT_ERROR_RATE:
         raise HTTPException(
             status_code=500,
             detail="Simulated failure in Service B"

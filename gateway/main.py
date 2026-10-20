@@ -1,9 +1,12 @@
 
+import logging
 import os
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from prometheus_fastapi_instrumentator import Instrumentator
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="MicroGuard - API Gateway")
 
@@ -31,8 +34,24 @@ async def process():
 
         return response.json()
 
-    except httpx.HTTPError:
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Downstream service returned error: status=%s, url=%s/process, detail=%s",
+            exc.response.status_code,
+            SERVICE_A_URL,
+            exc.response.text,
+        )
         raise HTTPException(
             status_code=503,
-            detail="Backend service unavailable"
+            detail="Backend service unavailable",
+        )
+    except httpx.RequestError as exc:
+        logger.error(
+            "Failed to reach downstream service at %s/process: %s",
+            SERVICE_A_URL,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Backend service unavailable",
         )

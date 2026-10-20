@@ -35,8 +35,8 @@ services:
     ports:
       - "8001:8001"
     environment:
-      FAULT_DELAY_SECONDS: "0"
-      FAULT_ERROR_RATE: "0"
+      FAULT_DELAY_SECONDS: ${FAULT_DELAY_SECONDS:-0}
+      FAULT_ERROR_RATE: ${FAULT_ERROR_RATE:-0}
 
   prometheus:
     image: prom/prometheus
