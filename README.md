@@ -12,26 +12,26 @@ MicroGuard implements both a synchronous three-tier microservice pipeline and an
 
 ```mermaid
 flowchart LR
-    Client(["Load Generator / Client\n(Locust / Browser)"]) -->|Port 8000| GW["API Gateway\n(FastAPI :8000)"]
-    GW -->|Docker Network\nhttp://service_a:8001| SA["Service A\n(Circuit Breaker\nFastAPI :8001)"]
-    SA -->|Docker Network\nhttp://service_b:8002| SB["Service B\n(Fault Injection Target\nFastAPI :8002)"]
+    Client(["Load Generator / Client<br/>(Locust / Browser)"]) -->|"Port 8000"| GW["API Gateway<br/>(FastAPI :8000)"]
+    GW -->|"Docker Network<br/>http://service_a:8001"| SA["Service A<br/>(Circuit Breaker<br/>FastAPI :8001)"]
+    SA -->|"Docker Network<br/>http://service_b:8002"| SB["Service B<br/>(Fault Injection Target<br/>FastAPI :8002)"]
 
-    Client -.->|Port 8001 (Baseline)| MONO["Monolith Baseline\n(In-Process Execution\nFastAPI :8001)"]
+    Client -.->|"Port 8001 (Baseline)"| MONO["Monolith Baseline<br/>(In-Process Execution<br/>FastAPI :8001)"]
 
     subgraph Observability ["Observability Stack"]
-        PROM["Prometheus\n(Scraper :9090)"]
-        GRAF["Grafana\n(Dashboard :3000)"]
-        PROM -->|Scrape /metrics| GW
-        PROM -->|Scrape /metrics| SA
-        PROM -->|Scrape /metrics| SB
-        PROM -->|Scrape /metrics| MONO
-        GRAF -->|PromQL Queries| PROM
+        PROM["Prometheus<br/>(Scraper :9090)"]
+        GRAF["Grafana<br/>(Dashboard :3000)"]
+        PROM -->|"Scrape /metrics"| GW
+        PROM -->|"Scrape /metrics"| SA
+        PROM -->|"Scrape /metrics"| SB
+        PROM -->|"Scrape /metrics"| MONO
+        GRAF -->|"PromQL Queries"| PROM
     end
 
     subgraph Testing ["Load Generation"]
-        LOCUST["Locust\n(Web UI :8089)"]
-        LOCUST -->|Target Gateway| GW
-        LOCUST -.->|Target Monolith| MONO
+        LOCUST["Locust<br/>(Web UI :8089)"]
+        LOCUST -->|"Target Gateway"| GW
+        LOCUST -.->|"Target Monolith"| MONO
     end
 ```
 
